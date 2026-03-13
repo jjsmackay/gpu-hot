@@ -12,12 +12,14 @@ PORT = 1312
 DEBUG = False
 
 # Monitoring Configuration
-UPDATE_INTERVAL = 0.5  # Update interval for NVML (sub-second monitoring)
-NVIDIA_SMI_INTERVAL = 2.0  # Update interval for nvidia-smi fallback (slower to reduce overhead)
-
 # GPU Monitoring Mode
 # Can be set via environment variable: NVIDIA_SMI=true
 NVIDIA_SMI = os.getenv('NVIDIA_SMI', 'false').lower() == 'true'
+
+# Monitoring Configuration
+# Defaults to 2.0s for nvidia-smi (slower to reduce overhead), 0.5s for NVML
+_default_interval = '2.0' if NVIDIA_SMI else '0.5'
+UPDATE_INTERVAL = float(os.getenv('UPDATE_INTERVAL', _default_interval))
 
 # Multi-Node Configuration
 # MODE: default (single node monitoring), hub (aggregate multiple nodes)
