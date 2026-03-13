@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 from fastapi import WebSocket
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -62,5 +63,5 @@ async def hub_loop(hub, connections):
             logger.error(f"Error in hub loop: {e}")
         
         # Match node update rate for real-time responsiveness
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(config.UPDATE_INTERVAL)
 
