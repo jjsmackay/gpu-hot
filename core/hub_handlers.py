@@ -7,6 +7,9 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat fallback so the event-driven loop still re-checks hub.running when nodes are idle
+HEARTBEAT_INTERVAL = 5.0
+
 # Global WebSocket connections
 websocket_connections = set()
 
@@ -43,28 +46,28 @@ def register_hub_handlers(app, hub):
 
 
 async def hub_loop(hub, connections):
-    """Async background loop that emits aggregated cluster data"""
+    """Async background loop that broadcasts aggregated cluster data on each node update"""
     logger.info("Hub monitoring loop started")
-    
+
     while hub.running:
         try:
             cluster_data = await hub.get_cluster_data()
-            
-            # Send to all connected clients
+
+            # Send to all connected clients (copy to avoid mutation during iteration)
             if connections:
                 disconnected = set()
-                for websocket in connections:
+                for websocket in list(connections):
                     try:
                         await websocket.send_text(json.dumps(cluster_data))
-                    except:
+                    except Exception:
                         disconnected.add(websocket)
-                
+
                 # Remove disconnected clients
                 connections -= disconnected
-                
+
         except Exception as e:
             logger.error(f"Error in hub loop: {e}")
-        
-        # Match node update rate for real-time responsiveness
-        await asyncio.sleep(0.5)
+
+        # Wake on the next node update; timeout is just the heartbeat
+        await hub.wait_for_update(timeout=HEARTBEAT_INTERVAL)
 

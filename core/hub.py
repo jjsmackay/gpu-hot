@@ -19,7 +19,8 @@ class Hub:
         self.url_to_node = {}  # url -> node_name mapping
         self.running = False
         self._connection_started = False
-        
+        self._update_event = None  # created lazily on the running loop
+
         # Initialize nodes as offline
         for url in node_urls:
             self.nodes[url] = {
@@ -30,7 +31,27 @@ class Hub:
                 'last_update': None
             }
             self.url_to_node[url] = url
-    
+
+    def _get_update_event(self):
+        """Lazily create the update event so it binds to the running loop."""
+        if self._update_event is None:
+            self._update_event = asyncio.Event()
+        return self._update_event
+
+    def signal_update(self):
+        """Wake the broadcast loop — a node's data or status changed."""
+        self._get_update_event().set()
+
+    async def wait_for_update(self, timeout):
+        """Block until a node delivers new data, or until timeout (heartbeat)."""
+        event = self._get_update_event()
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            event.clear()
+
     async def _connect_all_nodes(self):
         """Connect to all nodes in background with retries"""
         # Wait a bit for Docker network to be ready
@@ -77,7 +98,8 @@ class Hub:
                         'status': 'online',
                         'last_update': datetime.now().isoformat()
                     }
-                    
+                    self.signal_update()
+
                     # Listen for data from the node
                     async for message in websocket:
                         try:
@@ -97,7 +119,8 @@ class Hub:
                                 'status': 'online',
                                 'last_update': datetime.now().isoformat()
                             }
-                            
+                            self.signal_update()
+
                         except json.JSONDecodeError as e:
                             logger.error(f'Failed to parse message from {url}: {e}')
                         except Exception as e:
@@ -110,6 +133,7 @@ class Hub:
                 if node_name in self.nodes:
                     self.nodes[node_name]['status'] = 'offline'
                     logger.info(f'Marked node {node_name} as offline')
+                    self.signal_update()
             except Exception as e:
                 logger.error(f'Failed to connect to node {url}: {e}')
                 # Mark node as offline
@@ -117,6 +141,7 @@ class Hub:
                 if node_name in self.nodes:
                     self.nodes[node_name]['status'] = 'offline'
                     logger.info(f'Marked node {node_name} as offline')
+                    self.signal_update()
             
             # Wait before retrying connection
             if self.running:
