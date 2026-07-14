@@ -1,12 +1,13 @@
 """Async GPU monitoring using NVML"""
 
 import asyncio
+import time
 import pynvml
 import psutil
 import logging
 from .metrics import MetricsCollector
 from .nvidia_smi_fallback import parse_nvidia_smi
-from .config import NVIDIA_SMI
+from .config import NVIDIA_SMI, NVIDIA_SMI_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,8 @@ class GPUMonitor:
         self.gpu_data = {}
         self.collector = MetricsCollector()
         self.use_smi = {}  # Track which GPUs use nvidia-smi (decided at boot)
+        self._smi_cache = None  # Last nvidia-smi result
+        self._smi_last_ts = 0.0  # Monotonic time of last nvidia-smi refresh
 
         try:
             pynvml.nvmlInit()
@@ -89,16 +92,23 @@ class GPUMonitor:
             device_count = pynvml.nvmlDeviceGetCount()
             gpu_data = {}
 
-            # Get nvidia-smi data once if any GPU needs it
+            # Refresh nvidia-smi at most once per NVIDIA_SMI_INTERVAL so it doesn't throttle NVML GPUs
             smi_data = None
             if any(self.use_smi.values()):
-                try:
-                    # Run nvidia-smi in thread pool to avoid blocking
-                    smi_data = await asyncio.get_event_loop().run_in_executor(
-                        None, parse_nvidia_smi
-                    )
-                except Exception as e:
-                    logger.error(f"nvidia-smi failed: {e}")
+                now = time.monotonic()
+                if self._smi_cache is None or (now - self._smi_last_ts) >= NVIDIA_SMI_INTERVAL:
+                    try:
+                        # Run nvidia-smi in thread pool to avoid blocking
+                        smi_data = await asyncio.get_event_loop().run_in_executor(
+                            None, parse_nvidia_smi
+                        )
+                        self._smi_cache = smi_data
+                        self._smi_last_ts = now
+                    except Exception as e:
+                        logger.error(f"nvidia-smi failed: {e}")
+                        smi_data = self._smi_cache  # reuse last good data
+                else:
+                    smi_data = self._smi_cache
 
             # Collect GPU data concurrently
             tasks = []
